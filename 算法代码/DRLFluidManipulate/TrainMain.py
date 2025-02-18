@@ -4,6 +4,8 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import CheckpointCallback
 
 # 检查自定义环境
+from GridPlacementEnv import GridPlacementEnv
+
 env = GridPlacementEnv(
     grid_size=(10, 10),
     module_specs={
@@ -15,8 +17,8 @@ env = GridPlacementEnv(
     reagent_specs={
         "op1": {
             "r1": {"cells": 2, "from": "external"},
-            "r2": {"cells": 2, "from": "external"},
-            "r3": {"cells": 2, "from": "external"}
+            "r2": {"cells": 3, "from": "external"},
+            "r3": {"cells": 3, "from": "external"}
         },
         "op2": {
             "r1": {"cells": 2, "from": "external"},
@@ -25,7 +27,7 @@ env = GridPlacementEnv(
         "op3": {
             "r4": {"cells": 3, "from": "op1"},
             "r5": {"cells": 3, "from": "op2"},
-            "r6": {"cells": 4, "from": "op3"}
+            "r6": {"cells": 3, "from": "op3"}
         }
     },
     start_point={
@@ -46,8 +48,15 @@ checkpoint_callback = CheckpointCallback(
     save_freq=1000, save_path="./models/", name_prefix="ppo_grid"
 )
 
-# 创建模型
-model = PPO("MlpPolicy", env, verbose=1)
+# 设置 TensorBoard 日志路径
+tensorboard_log_dir = "./ppo_tensorboard/"
+# **修改此处：使用 MultiInputPolicy**
+model = PPO(
+    "MultiInputPolicy",
+    env,
+    verbose=1,
+    tensorboard_log=tensorboard_log_dir
+)
 
 # 训练模型
 model.learn(total_timesteps=100000, callback=checkpoint_callback)

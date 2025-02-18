@@ -1,4 +1,4 @@
-import gym
+
 from GridPlacementEnv import GridPlacementEnv
 import matplotlib.pyplot as plt
 
@@ -8,10 +8,9 @@ start_point = {
     "r3": (0, 5),
 }
 env = GridPlacementEnv(grid_size=(10, 10), module_specs={
-    "op1": {"size": (2, 4), "duration": 5, "dependencies": ["r1", "r2", "r3"]},
-    "op2": {"size": (2, 2), "duration": 5, "dependencies": ["r1", "r3"]},
-    "op3": {"size": (3, 3), "duration": 5, "dependencies": ["op1", "op2"]},
-    "op4": {"size": (0, 0), "duration": 5, "dependencies": ["op3"]}
+    "op1": {"size": (2, 4), "duration": 20, "dependencies": ["r1", "r2", "r3"]},
+    "op2": {"size": (2, 2), "duration": 20, "dependencies": ["r1", "r3"]},
+    "op3": {"size": (3, 3), "duration": 20, "dependencies": ["op1", "op2"]},
 }, reagent_specs={
     "op1": {
         "r1": {"cells": 2, "from": "external"},  # 2 cells from r1 for op1
@@ -25,7 +24,6 @@ env = GridPlacementEnv(grid_size=(10, 10), module_specs={
     "op3": {
         "r4": {"cells": 3, "from": "op1"},
         "r5": {"cells": 3, "from": "op2"},
-        "r6": {"cells": 4, "from": "op3"}
     }
 }, start_point=start_point)
 
@@ -36,7 +34,7 @@ rewards = []
 done = False
 while not done:
     action = env.action_space.sample()
-    next_state, reward, done, info = env.step(action)
+    next_state, reward, done, truncated, info = env.step(action)
     states.append(next_state)
     rewards.append(reward)
     print(next_state)

@@ -1,234 +1,303 @@
+from abc import ABC
 import numpy as np
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 
 
-class GridPlacementEnv(gym.Env):
+class GridPlacementEnv(gym.Env, ABC):
     def __init__(self, grid_size=(10, 10), module_specs=None, reagent_specs=None, start_point=None):
         super(GridPlacementEnv, self).__init__()
-
         self.grid_size = grid_size
         self.grid = np.zeros(grid_size, dtype=int)  # 0 indicates unoccupied
-
         self.module_queue = list(module_specs.keys()) if module_specs else []
         self.module_specs = module_specs if module_specs else {}
-
         self.reagent_specs = reagent_specs if reagent_specs else {}
         self.start_point = start_point if start_point else {}
+        self.module_output_points = {}
 
-        #  动作空间用编号实现每个动作，10×10一共有100个动作，比如12表示在(1,2)的动作
-        self.action_space = spaces.Discrete(grid_size[0] * grid_size[1]*2)
-        #  观测空间使用low=0表示最小值为0，未占用；使用high=1表示最大值为1，占用
-        self.observation_space = spaces.Box(
-            low=0, high=1, shape=(grid_size[0], grid_size[1]), dtype=int
-        )
+        # Rewards
+        self.reward_placement = 1.0
+        self.reward_invalid = -1.0
+        self.reward_proximity = 0.1
+        self.reward_path_penalty = -0.05
+        self.reward_completion = 0.5
+        self.reward_storage_efficiency = 0.2  # 试剂存放均匀性奖励
+
+        # Action and observation spaces
+        self.max_reagent_assignments = 4  # 允许的试剂存放模式数
+        self.action_space = spaces.MultiDiscrete([
+            grid_size[0] * grid_size[1] * 2,  # 组件的位置和方向
+            self.max_reagent_assignments  # 试剂存放模式
+        ])
+
+        self.observation_space = spaces.Dict({
+            "grid": spaces.Box(low=0, high=1, shape=(self.grid_size[0] * self.grid_size[1],), dtype=int),
+            "current_module": spaces.Box(low=0, high=100, shape=(1,), dtype=int)
+        })
 
         self.current_time = 0
+        self.start_time = 0
         self.active_modules = []
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
         self.grid = np.zeros(self.grid_size, dtype=int)
         self.current_time = 0
+        self.start_time = 0
         self.active_modules = []
-        return self.grid.copy()  # 使用copy()的原因，外部代码修改返回状态可能影响环境内部网络状态
+        self.module_queue = list(self.module_specs.keys())
+        return self._get_observation(), {}
 
     def step(self, action):
-        if not self.module_queue:
-            return self.grid.copy(), 0, True, {}  # 所有模块已放置完成，任务结束
-        # 根据动作获取坐标
-        flat_idx, orientation = divmod(action, 2)
+        flat_idx, orientation = divmod(action[0], 2)
+        reagent_mode = action[1]  # 试剂存放模式
         row, col = divmod(flat_idx, self.grid_size[1])
+        self._remove_expired_modules()  # 检查并释放过期模块
+        if not self.module_queue:
+            return self.grid.copy(), 0, True, False, {}
 
-        module_id = self.module_queue[0]  # 取队列中的第一个模块
-        print(module_id)
+        module_id = self.module_queue[0]
+        reward = 0
 
-        if not self._is_valid_placement(row, col, module_id, orientation):  # 布局失败，返回状态和奖励
-            return self.grid.copy(), -1, False, {}
+        if self._is_valid_placement(row, col, module_id, orientation):
+            self._place_module(module_id, row, col, orientation, reagent_mode)
+            reward += self.reward_placement
+            reward += self._calculate_proximity_reward(module_id, row, col)  # 计算父子组件的奖励
+            reward += self._plan_reagent_paths(module_id)
 
-        # 计算放置奖励
-        reward = self._calculate_placement_reward(row, col, module_id, orientation)
+            # 获取当前组件
+            module = next(m for m in self.active_modules if m["id"] == module_id)
+            reward += self._calculate_storage_efficiency(module)  # 试剂存放奖励
 
-        self._place_module(module_id, row, col, orientation)
-
-        reward += self._plan_reagent_paths(module_id)
+            self.module_queue.pop(0)
+            self.start_time += 1
+            if not self.module_queue:
+                reward += self.reward_completion
+                return self._get_observation(), reward, True, False, {}
+        else:
+            reward += self.reward_invalid
 
         self.current_time += 1
-        self._remove_expired_modules()
+        return self._get_observation(), reward, self._check_done(), self.current_time >= 100, {}
 
-        done = self._check_done()
-        self.module_queue.pop(0)
+    # 移除已经执行完的组件
+    def _remove_expired_modules(self):
+        expired_modules = []
+        for module in self.active_modules:
+            if self.start_time - module["start_time"] >= module["duration"]:
+                expired_modules.append(module)
 
-        return self.grid.copy(), reward, done, {}
+        for module in expired_modules:
+            row, col, height, width = module["position"]
+            center = (row + height / 2, col + width / 2)
 
-    def _is_parent_occupied(self, r, c, module_id):
-        """
-        判断给定位置 (r, c) 是否被父模块占用。
-        """
-        module_spec = self.module_specs[module_id]
-        if 'dependencies' not in module_spec:
-            return False  # 如果没有父模块依赖，直接返回 False
+            for reagent in self.reagent_specs.get(module["id"], {}):
+                if self.reagent_specs[module["id"]][reagent]["from"] == module["id"]:
+                    self.start_point[reagent] = center  # 记录中间试剂的起始位置
 
-        parent_modules = [dep for dep in module_spec['dependencies'] if dep.startswith("op")]
+            for r in range(row, row + height):
+                for c in range(col, col + width):
+                    self.grid[r, c] = 0
+            # self.active_modules.remove(module)
 
-        for parent_id in parent_modules:
-            parent_module = next(m for m in self.active_modules if m['id'] == parent_id)
-            parent_row, parent_col, parent_height, parent_width = parent_module['position']
+    def _get_observation(self):
+        # 将 grid 展平成 1D 向量
+        flattened_grid = self.grid.flatten()
+        current_module = np.array([int(self.module_queue[0][2:])]) if self.module_queue else np.array([0])
 
-            # 判断 (r, c) 是否在父模块的占用区域内
-            if parent_row <= r < parent_row + parent_height and parent_col <= c < parent_col + parent_width:
-                return True  # 该位置被父模块占用
-
-        return False  # 该位置没有被父模块占用
+        # 返回字典格式的观测
+        return {
+            "grid": flattened_grid,
+            "current_module": current_module
+        }
 
     def _is_valid_placement(self, row, col, module_id, orientation):
-        #  加一个父子关系组件
-
         module_spec = self.module_specs[module_id]
         height, width = module_spec['size']
-
         if orientation == 1:
             height, width = width, height
 
         if row + height > self.grid_size[0] or col + width > self.grid_size[1]:
             return False
 
-        # 检查依赖是否满足
-        if not self._can_place_module(module_id):
-            return False  # 如果依赖未满足，返回 False
-
         for r in range(row, row + height):
             for c in range(col, col + width):
                 if self.grid[r, c] != 0:
-                    # 如果此位置已经被占用，检查是否是父子组件之间的重叠
-                    if not self._is_parent_occupied(r, c, module_id):
+                    parent_id = next((dep for dep in module_spec.get('dependencies', [])
+                                      if any(m['id'] == dep and self.grid[r, c] == int(dep[2:])
+                                             for m in self.active_modules)), None)
+                    if not parent_id:
                         return False
-
         return True
 
-    def _can_place_module(self, module_id):
-        module_spec = self.module_specs[module_id]
-        dependencies = module_spec.get("dependencies", [])
-        print(dependencies)
-        print(self.active_modules)
-
-        for dep in dependencies:
-            # 如果依赖是操作，则检查对应模块是否已完成
-            if dep.startswith("op"):
-                if not any(m["id"] == dep for m in self.active_modules):
-                    return False  # 依赖模块未完成
-            # 如果依赖是试剂，跳过检查（已在路径规划中处理）
-        return True
-
-    def _place_module(self, module_id, row, col, orientation):
+    def _place_module(self, module_id, row, col, orientation, reagent_mode):
         module_spec = self.module_specs[module_id]
         height, width = module_spec['size']
-
-        # Adjust size based on orientation
-        if orientation == 1:  # Rotate 90 degrees
+        if orientation == 1:
             height, width = width, height
-
         for r in range(row, row + height):
             for c in range(col, col + width):
                 self.grid[r, c] = int(module_id[2:])
-
-        self.active_modules.append({
+        module = {
             "id": module_id,
-            "start_time": self.current_time,
-            "duration": module_spec['duration'],
             "position": (row, col, height, width),
-            "dependencies": module_spec.get('dependencies', []),
-        })
+            "dependencies": module_spec.get("dependencies", []),
+            "start_time": self.start_time,  # 当前时间步
+            "duration": module_spec.get("duration", 3),
+            "reagent_positions": {}
+        }
+        module["reagent_positions"] = self._assign_reagent_distribution(module, reagent_mode)
+        self.active_modules.append(module)
 
-    def _calculate_placement_reward(self, row, col, module_id, orientation):
+    def _assign_reagent_distribution(self, module, reagent_mode):
         """
-        计算模块放置后的奖励。
-        奖励与父模块的相对位置和路径长度有关。
+        根据不同的 reagent_mode 在设备内部均匀分配试剂。
+        reagent_mode	试剂存放方式
+            0   	    均匀填充设备区域
+            1   	    试剂集中在设备左上角
+            2   	    试剂集中在设备右下角
+            3   	    随机填充设备区域
         """
-        # 获取模块规格
+        row, col, height, width = module["position"]
+        occupied_cells = [(r, c) for r in range(row, row + height) for c in range(col, col + width)]
+
+        reagent_distribution = {}  # 存储试剂的具体位置
+        assigned_cells = set()  # 记录已分配的网格
+
+        # 获取所有试剂
+        reagent_list = list(self.reagent_specs.get(module["id"], {}).items())
+        if reagent_mode == 0:  # **均匀填充**
+            index = 0
+            for reagent, spec in reagent_list:
+                reagent_distribution[reagent] = []
+                required_cells = spec["cells"]
+                while len(reagent_distribution[reagent]) < required_cells:
+                    cell = occupied_cells[index % len(occupied_cells)]
+                    if cell not in assigned_cells:
+                        reagent_distribution[reagent].append(cell)
+                        assigned_cells.add(cell)
+                    index += 1
+
+        elif reagent_mode == 1:  # **集中在左上角**
+            for reagent, spec in reagent_list:
+                reagent_distribution[reagent] = occupied_cells[:spec["cells"]]  # 从第一个单元开始分配
+                assigned_cells.update(occupied_cells[:spec["cells"]])
+        elif reagent_mode == 2:  # **集中在右下角**
+            for reagent, spec in reagent_list:
+                reagent_distribution[reagent] = occupied_cells[-spec["cells"]:]  # 从最后一个单元开始分配
+                assigned_cells.update(occupied_cells[-spec["cells"]:])
+        else:  # **默认随机分布**
+            np.random.shuffle(occupied_cells)
+            index = 0
+            for reagent, spec in reagent_list:
+                reagent_distribution[reagent] = []
+                required_cells = spec["cells"]
+                while len(reagent_distribution[reagent]) < required_cells:
+                    cell = occupied_cells[index % len(occupied_cells)]
+                    if cell not in assigned_cells:
+                        reagent_distribution[reagent].append(cell)
+                        assigned_cells.add(cell)
+                    index += 1
+
+        return reagent_distribution
+
+    # 奖励计算相关方法
+    def _calculate_proximity_reward(self, module_id, row, col):
         module_spec = self.module_specs[module_id]
-        height, width = module_spec['size']
-
-        # 如果模块方向被旋转，交换高度和宽度
-        if orientation == 1:
-            height, width = width, height
-
-        # 计算奖励初始化值
+        dependencies = module_spec.get('dependencies', [])
         reward = 0
 
-        # 如果模块有依赖的其他模块（如父模块），确保子组件放置在父模块附近
-        if "dependencies" in module_spec:
-            parent_modules = [dep for dep in module_spec['dependencies'] if dep.startswith("op")]
-
-            for parent_id in parent_modules:
-                parent_module = next(m for m in self.active_modules if m['id'] == parent_id)
-                parent_row, parent_col, parent_height, parent_width = parent_module['position']
-
-                # 计算子模块与父模块的相对位置，并给奖励
-                reward += self._calculate_proximity_reward(row, col, height, width, parent_row, parent_col,
-                                                           parent_height, parent_width)
-
-        return reward
-
-    def _calculate_proximity_reward(self, child_row, child_col, child_height, child_width, parent_row, parent_col,
-                                    parent_height, parent_width):
-        """
-        计算子模块与父模块之间的距离奖励，距离越近奖励越高。
-        """
-        # 计算子模块和父模块的边界坐标
-        child_bottom = child_row + child_height
-        child_right = child_col + child_width
-        parent_bottom = parent_row + parent_height
-        parent_right = parent_col + parent_width
-
-        # 计算子模块与父模块之间的距离
-        # 如果子模块与父模块重叠或紧邻，距离为0（最佳情况）
-        vertical_distance = max(0, max(parent_row - child_bottom, child_row - parent_bottom))
-        horizontal_distance = max(0, max(parent_col - child_right, child_col - parent_right))
-
-        # 计算总距离（曼哈顿距离）
-        distance = vertical_distance + horizontal_distance
-
-        # 计算奖励：距离越小，奖励越高
-        reward = 1 / (distance + 1)  # 使用 +1 避免除以零的错误
-
+        for dep in dependencies:
+            parent = next((m for m in self.active_modules if m['id'] == dep), None)
+            if parent:
+                parent_row, parent_col, parent_height, parent_width = parent['position']
+                distance = abs(row - parent_row) + abs(col - parent_col)
+                reward += self.reward_proximity / (distance + 1)
         return reward
 
     def _plan_reagent_paths(self, module_id):
+        """
+        计算试剂流入设备的路径，目标是设备内部的最短路径单元，并给予奖励或惩罚。
+        """
         module = next(m for m in self.active_modules if m['id'] == module_id)
         row, col, height, width = module['position']
+        total_penalty = 0
 
-        reagents = self.reagent_specs.get(module_id, {})
-        total_path_length = 0
+        for reagent, spec in self.reagent_specs.get(module_id, {}).items():
+            start_point = self.start_point.get(reagent, None)
+            if start_point is None:
+                start_point = (row + height / 2, col + width / 2)
 
-        for reagent, spec in reagents.items():
-            if spec['from'] == "external":
-                start_point = self.start_point[reagent]
-            else:
-                dependency_module = next(
-                    m for m in self.active_modules if m['id'] == spec['from']
-                )
-                start_point = dependency_module['position'][:2]
+            # 获取试剂的所有可能存储位置
+            candidate_positions = module["reagent_positions"].get(reagent, [])
 
-            for _ in range(spec['cells']):  # 这个奖励也有点问题
-                path_length = self._calculate_path_length(start_point, (row, col))
-                total_path_length += path_length
+            # 选择距离试剂源最近的目标位置
+            min_path_length = float('inf')
 
-        return -total_path_length
+            for target in candidate_positions:
+                path_length = self._calculate_reagent_distance(start_point, target)
+                if path_length < min_path_length:
+                    min_path_length = path_length
 
-    def _calculate_path_length(self, start, end):
-        return abs(start[0] - end[0]) + abs(start[1] - end[1])
+            # 计算最优路径的奖励/惩罚
+            total_penalty += min_path_length * self.reward_path_penalty
 
-    def _remove_expired_modules(self):
-        expired = [m for m in self.active_modules if self.current_time - m['start_time'] >= m['duration']]
-        for module in expired:
-            # row, col, height, width = (module['position']["row"], module['position']["col"], module['position'][
-            # "height"], module['position']["width"])
-            row, col, height, width = module['position']
-            for r in range(row, row + height):
-                for c in range(col, col + width):
-                    self.grid[r, c] = 0
+        return total_penalty
 
-        self.active_modules = [m for m in self.active_modules if m not in expired]
+    def _calculate_reagent_distance(self, start, end):
+        sx, sy = start
+        ex, ey = end
+        path_length = abs(sx - ex) + abs(sy - ey)
+        sx, sy = int(start[0]), int(start[1])
+        ex, ey = int(end[0]), int(end[1])
+        # 检查路径冲突
+        conflict_penalty = 0
+        while sx != ex or sy != ey:
+            if sx < ex:
+                sx += 1
+            elif sx > ex:
+                sx -= 1
+            elif sy < ey:
+                sy += 1
+            elif sy > ey:
+                sy -= 1
+            # 如果路径经过已占用网格，增加冲突惩罚
+            if self.grid[sx, sy] != 0:
+                conflict_penalty += 1
+
+        return path_length + conflict_penalty
+
+    def _calculate_storage_efficiency(self, module):
+        """
+        计算试剂的存放是否有利于流体布线：
+        - 如果试剂存放方式减少整体流体路径长度，则奖励
+        - 如果试剂存放方式导致路径变长，则惩罚
+        """
+        row, col, height, width = module["position"]
+        center = (row + height / 2, col + width / 2)
+
+        total_efficiency = 0
+        total_positions = 0
+
+        for reagent, positions in module["reagent_positions"].items():
+            for pos in positions:
+                # 计算源头到中心点的路径
+                start_point = self.start_point.get(reagent, (0, 0))
+                dist_to_center = self._calculate_reagent_distance(start_point, center)
+
+                # 计算源头到最终位置的路径
+                dist_to_final = self._calculate_reagent_distance(start_point, pos)
+
+                # 计算路径差异，正差值意味着优化成功
+                path_diff = dist_to_center - dist_to_final
+                total_efficiency += path_diff
+                total_positions += 1
+
+            # 归一化：路径差值除以总数
+        avg_efficiency = total_efficiency / max(total_positions, 1)
+
+        # 奖励正向优化，惩罚逆向效果
+        return avg_efficiency * self.reward_storage_efficiency
 
     def _check_done(self):
-        return self.current_time >= 100
+        return len(self.module_queue) == 0
