@@ -62,12 +62,16 @@ class GridPlacementEnv(gym.Env, ABC):
         if self._is_valid_placement(row, col, module_id, orientation):
             self._place_module(module_id, row, col, orientation, reagent_mode)
             reward += self.reward_placement
+            print(f"After 'reward_placement' the reward is: {reward}")
             reward += self._calculate_proximity_reward(module_id, row, col)  # 计算父子组件的奖励
+            print(f"After '_calculate_proximity_reward' the reward is: {reward}")
             reward += self._plan_reagent_paths(module_id)
+            print(f"After '_plan_reagent_paths' the reward is: {reward}")
 
             # 获取当前组件
             module = next(m for m in self.active_modules if m["id"] == module_id)
             reward += self._calculate_storage_efficiency(module)  # 试剂存放奖励
+            print(f"After '_calculate_storage_efficiency' the reward is: {reward}")
 
             self.module_queue.pop(0)
             self.start_time += 1
@@ -76,6 +80,9 @@ class GridPlacementEnv(gym.Env, ABC):
                 return self._get_observation(), reward, True, False, {}
         else:
             reward += self.reward_invalid
+            print(f"After 'reward_invalid' the reward is: {reward}")
+
+        print(f"After 'step' the reward is: {reward}")
         self.current_time += 1
         return self._get_observation(), reward, self._check_done(), self.current_time >= 100, {}
 
@@ -85,13 +92,15 @@ class GridPlacementEnv(gym.Env, ABC):
         for module in self.active_modules:
             if self.start_time - module["start_time"] >= module["duration"]:
                 expired_modules.append(module)
-            if module["generate"] not in self.start_point:
-                row, col, height, width = module["position"]
-                center = (row + height / 2, col + width / 2)
-                self.start_point[module["generate"]] = center  # 记录中间试剂的起始位置
 
         for module in expired_modules:
             row, col, height, width = module["position"]
+            center = (row + height / 2, col + width / 2)
+
+            for reagent in self.reagent_specs.get(module["id"], {}):
+                if self.reagent_specs[module["id"]][reagent]["from"] == module["id"]:
+                    self.start_point[reagent] = center  # 记录中间试剂的起始位置
+
             for r in range(row, row + height):
                 for c in range(col, col + width):
                     self.grid[r, c] = 0
@@ -139,7 +148,6 @@ class GridPlacementEnv(gym.Env, ABC):
             "id": module_id,
             "position": (row, col, height, width),
             "dependencies": module_spec.get("dependencies", []),
-            "generate": module_spec.get("generate", []),
             "start_time": self.start_time,  # 当前时间步
             "duration": module_spec.get("duration", 3),
             "reagent_positions": {},
@@ -244,6 +252,7 @@ class GridPlacementEnv(gym.Env, ABC):
 
             # 获取试剂的所有可能存储位置
             candidate_positions = module["reagent_positions"].get(reagent, [])
+            print(f"module:{module_id} have reagent {candidate_positions}")
             # 选择距离试剂源最近的目标位置
             max_path_length = -float('inf')
 

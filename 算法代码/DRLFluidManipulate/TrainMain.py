@@ -25,9 +25,9 @@ env = GridPlacementEnv(
             "r3": {"cells": 2, "from": "external"}
         },
         "op3": {
-            "r4": {"cells": 3, "from": "op1"},
-            "r5": {"cells": 3, "from": "op2"},
-            "r6": {"cells": 3, "from": "op3"}
+            "r4": {"cells": 2, "from": "op1"},
+            "r5": {"cells": 2, "from": "op2"},
+            "r6": {"cells": 2, "from": "op3"}
         }
     },
     start_point={
