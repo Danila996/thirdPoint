@@ -18,10 +18,11 @@ class GridPlacementEnv(gym.Env, ABC):
         # Rewards
         self.reward_placement = 1.0
         self.reward_invalid = -1.0
-        self.reward_proximity = 0.5
+        self.reward_proximity = 1.5
         self.reward_path_penalty = -0.05
         self.reward_completion = 0.5
         self.reward_storage_efficiency = 0.2  # 试剂存放均匀性奖励
+        self.reward_blockage_penalty = 0.2
 
         # Action and observation spaces
         self.max_reagent_assignments = 4  # 允许的试剂存放模式数
@@ -62,12 +63,16 @@ class GridPlacementEnv(gym.Env, ABC):
         if self._is_valid_placement(row, col, module_id, orientation):
             self._place_module(module_id, row, col, orientation, reagent_mode)
             reward += self.reward_placement
+            # print(f"After 'reward_placement' the reward is: {reward}")
             reward += self._calculate_proximity_reward(module_id, row, col)  # 计算父子组件的奖励
+            # print(f"After '_calculate_proximity_reward' the reward is: {reward}")
             reward += self._plan_reagent_paths(module_id)
+            # print(f"After '_plan_reagent_paths' the reward is: {reward}")
 
             # 获取当前组件
             module = next(m for m in self.active_modules if m["id"] == module_id)
             reward += self._calculate_storage_efficiency(module)  # 试剂存放奖励
+            # print(f"After '_calculate_storage_efficiency' the reward is: {reward}")
 
             self.module_queue.pop(0)
             self.start_time += 1
@@ -76,7 +81,9 @@ class GridPlacementEnv(gym.Env, ABC):
                 return self._get_observation(), reward, True, False, {}
         else:
             reward += self.reward_invalid
+            # print(f"After 'reward_invalid' the reward is: {reward}")
         self.current_time += 1
+        # print(f"After 'step' the reward is: {reward}")
         return self._get_observation(), reward, self._check_done(), self.current_time >= 100, {}
 
     # 移除已经执行完的组件
@@ -316,7 +323,7 @@ class GridPlacementEnv(gym.Env, ABC):
         avg_efficiency = total_efficiency / max(total_positions, 1)
 
         # 奖励正向优化，惩罚逆向效果
-        return avg_efficiency * self.reward_storage_efficiency - blockage_penalty * 0.2
+        return avg_efficiency * self.reward_storage_efficiency - blockage_penalty * self.reward_blockage_penalty
 
     def _is_cell_surrounded(self, grid, module, reagent, cell):
         """

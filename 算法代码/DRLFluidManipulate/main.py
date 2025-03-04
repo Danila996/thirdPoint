@@ -1,4 +1,4 @@
-
+import numpy as np
 from GridPlacementEnv import GridPlacementEnv
 import matplotlib.pyplot as plt
 # module_specs = {
@@ -27,12 +27,12 @@ import matplotlib.pyplot as plt
 #     "r3": (0, 5),
 # }
 module_specs = {
-    "op1": {"size": (2, 3), "duration": 1, "dependencies": ["r1", "r2"], "generate": "r9"},
-    "op2": {"size": (2, 3), "duration": 1, "dependencies": ["r3", "r4"], "generate": "r10"},
-    "op3": {"size": (2, 3), "duration": 1, "dependencies": ["r5", "r6"], "generate": "r11"},
-    "op4": {"size": (2, 3), "duration": 1, "dependencies": ["r7", "r8"], "generate": "r12"},
-    "op5": {"size": (2, 3), "duration": 2, "dependencies": ["op1", "op2"], "generate": "r13"},  # 容量6
-    "op6": {"size": (3, 4), "duration": 2, "dependencies": ["op3", "op4"], "generate": "r14"},
+    "op1": {"size": (2, 3), "duration": 6, "dependencies": ["r1", "r2"], "generate": "r9"},
+    "op2": {"size": (2, 3), "duration": 5, "dependencies": ["r3", "r4"], "generate": "r10"},
+    "op3": {"size": (2, 3), "duration": 4, "dependencies": ["r5", "r6"], "generate": "r11"},
+    "op4": {"size": (2, 3), "duration": 3, "dependencies": ["r7", "r8"], "generate": "r12"},
+    "op5": {"size": (2, 3), "duration": 3, "dependencies": ["op1", "op2"], "generate": "r13"},  # 容量6
+    "op6": {"size": (3, 4), "duration": 3, "dependencies": ["op3", "op4"], "generate": "r14"},
     "op7": {"size": (4, 5), "duration": 3, "dependencies": ["op5", "op6"], "generate": "r15"},
 }
 reagent_specs = {
@@ -68,15 +68,15 @@ reagent_specs = {
 start_point = {
     "r1": (0, 0),
     "r2": (2, 0),
-    "r3": (0, 2),
-    "r4": (2, 2),
-    "r5": (4, 0),
-    "r6": (6, 0),
-    "r7": (4, 2),
-    "r8": (6, 2)
+    "r3": (0, 4),
+    "r4": (0, 6),
+    "r5": (5, 0),
+    "r6": (7, 0),
+    "r7": (9, 0),
+    "r8": (8, 0)
 }
-
-env = GridPlacementEnv(grid_size=(10, 10),
+grid_size = (15, 15)
+env = GridPlacementEnv(grid_size=grid_size,
                        module_specs=module_specs,
                        reagent_specs=reagent_specs,
                        start_point=start_point)
@@ -84,14 +84,32 @@ env = GridPlacementEnv(grid_size=(10, 10),
 # 假设你在测试过程中记录了每一步的状态和奖励
 states = []
 rewards = []
-
 done = False
+
+
+def reshape_grid(grid):
+    """将一维 grid 转换为二维网格"""
+    return np.reshape(grid, grid_size)
+
+
 while not done:
     action = env.action_space.sample()
     next_state, reward, done, truncated, info = env.step(action)
     states.append(next_state)
     rewards.append(reward)
-    print(next_state)
+    # 转换 grid 为二维网格
+    grid_2d = reshape_grid(next_state['grid'])
+    grid_2d[0][0] = -1
+    grid_2d[2][0] = -2
+    grid_2d[0][4] = -3
+    grid_2d[0][6] = -4
+    grid_2d[5][0] = -5
+    grid_2d[7][0] = -6
+    grid_2d[9][0] = -7
+    grid_2d[8][0] = -8
+
+    print("Grid (2D):")
+    print(grid_2d)
     print()
 
 # 可视化奖励

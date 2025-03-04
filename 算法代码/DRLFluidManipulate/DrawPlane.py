@@ -8,12 +8,12 @@ from GridPlacementEnv import GridPlacementEnv
 
 # 定义一个测试用例
 module_specs = {
-    "op1": {"size": (2, 3), "duration": 1, "dependencies": ["r1", "r2"], "generate": "r9"},
-    "op2": {"size": (2, 3), "duration": 1, "dependencies": ["r3", "r4"], "generate": "r10"},
-    "op3": {"size": (2, 3), "duration": 1, "dependencies": ["r5", "r6"], "generate": "r11"},
-    "op4": {"size": (2, 3), "duration": 1, "dependencies": ["r7", "r8"], "generate": "r12"},
-    "op5": {"size": (2, 3), "duration": 2, "dependencies": ["op1", "op2"], "generate": "r13"},  # 容量6
-    "op6": {"size": (3, 4), "duration": 2, "dependencies": ["op3", "op4"], "generate": "r14"},
+    "op1": {"size": (2, 3), "duration": 6, "dependencies": ["r1", "r2"], "generate": "r9"},
+    "op2": {"size": (2, 3), "duration": 5, "dependencies": ["r3", "r4"], "generate": "r10"},
+    "op3": {"size": (2, 3), "duration": 4, "dependencies": ["r5", "r6"], "generate": "r11"},
+    "op4": {"size": (2, 3), "duration": 3, "dependencies": ["r7", "r8"], "generate": "r12"},
+    "op5": {"size": (2, 3), "duration": 3, "dependencies": ["op1", "op2"], "generate": "r13"},  # 容量6
+    "op6": {"size": (3, 4), "duration": 3, "dependencies": ["op3", "op4"], "generate": "r14"},
     "op7": {"size": (4, 5), "duration": 3, "dependencies": ["op5", "op6"], "generate": "r15"},
 }
 reagent_specs = {
@@ -49,12 +49,12 @@ reagent_specs = {
 start_point = {
     "r1": (0, 0),
     "r2": (2, 0),
-    "r3": (0, 2),
-    "r4": (4, 0),
-    "r5": (0, 4),
-    "r6": (0, 6),
+    "r3": (0, 4),
+    "r4": (0, 6),
+    "r5": (5, 0),
+    "r6": (7, 0),
     "r7": (9, 0),
-    "r8": (6, 0)
+    "r8": (8, 0)
 }
 # module_specs = {
 #     "op1": {"size": (2, 3), "duration": 4, "dependencies": ["r1", "r2"]},

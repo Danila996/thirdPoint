@@ -2,64 +2,54 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from stable_baselines3 import PPO
-from GridPlacementEnv import GridPlacementEnv
+from MultiAgentFlatWrapper import MultiAgentFlatWrapper
+from MultiAgentGridEnv import MultiAgentGridEnv
 import os
 
+# 创建测试环境
 module_specs = {
-    "op1": {"size": (2, 3), "duration": 6, "dependencies": ["r1", "r2"], "generate": "r9"},
-    "op2": {"size": (2, 3), "duration": 5, "dependencies": ["r3", "r4"], "generate": "r10"},
+    "op1": {"size": (2, 3), "duration": 2, "dependencies": ["r1", "r2"], "generate": "r9"},
+    "op2": {"size": (2, 3), "duration": 3, "dependencies": ["r3", "r4"], "generate": "r10"},
     "op3": {"size": (2, 3), "duration": 4, "dependencies": ["r5", "r6"], "generate": "r11"},
-    "op4": {"size": (2, 3), "duration": 3, "dependencies": ["r7", "r8"], "generate": "r12"},
-    "op5": {"size": (2, 3), "duration": 3, "dependencies": ["op1", "op2"], "generate": "r13"},  # 容量6
-    "op6": {"size": (3, 4), "duration": 3, "dependencies": ["op3", "op4"], "generate": "r14"},
-    "op7": {"size": (4, 5), "duration": 3, "dependencies": ["op5", "op6"], "generate": "r15"},
+    "op4": {"size": (2, 3), "duration": 2, "dependencies": ["r7", "r8"], "generate": "r12"},
+    "op5": {"size": (2, 3), "duration": 2, "dependencies": ["op1", "op2"], "generate": "r13"},
+    "op6": {"size": (3, 4), "duration": 2, "dependencies": ["op3", "op4"], "generate": "r14"},
+    "op7": {"size": (4, 5), "duration": 1, "dependencies": ["op5", "op6"], "generate": "r15"}
 }
 reagent_specs = {
-    "op1": {
-        "r1": {"cells": 3, "from": "external"},
-        "r2": {"cells": 3, "from": "external"}
-    },
-    "op2": {
-        "r3": {"cells": 2, "from": "external"},
-        "r4": {"cells": 4, "from": "external"}
-    },
-    "op3": {
-        "r5": {"cells": 4, "from": "external"},
-        "r6": {"cells": 2, "from": "external"}
-    },
-    "op4": {
-        "r7": {"cells": 3, "from": "external"},
-        "r8": {"cells": 3, "from": "external"}
-    },
-    "op5": {
-        "r9": {"cells": 2, "from": "op1"},  # op1 输出6，op5容量6，只接收2
-        "r10": {"cells": 4, "from": "op2"}  # op2 输出6，op5容量6，只接收4
-    },
-    "op6": {
-        "r11": {"cells": 6, "from": "op3"},
-        "r12": {"cells": 6, "from": "op4"}
-    },
-    "op7": {
-        "r13": {"cells": 12, "from": "op5"},
-        "r14": {"cells": 8, "from": "op6"}
-    }
+    "op1": {"r1": {"cells": 3, "from": "external"}, "r2": {"cells": 3, "from": "external"}},
+    "op2": {"r3": {"cells": 2, "from": "external"}, "r4": {"cells": 4, "from": "external"}},
+    "op3": {"r5": {"cells": 4, "from": "external"}, "r6": {"cells": 2, "from": "external"}},
+    "op4": {"r7": {"cells": 3, "from": "external"}, "r8": {"cells": 3, "from": "external"}},
+    "op5": {"r9": {"cells": 2, "from": "op1"}, "r10": {"cells": 4, "from": "op2"}},
+    "op6": {"r11": {"cells": 6, "from": "op3"}, "r12": {"cells": 6, "from": "op4"}},
+    "op7": {"r13": {"cells": 12, "from": "op5"}, "r14": {"cells": 8, "from": "op6"}}
 }
 start_point = {
-    "r1": (0, 0),
-    "r2": (2, 0),
-    "r3": (0, 4),
-    "r4": (0, 6),
-    "r5": (5, 0),
-    "r6": (7, 0),
-    "r7": (9, 0),
-    "r8": (8, 0)
+    "r1": (0, 0), "r2": (2, 0), "r3": (0, 4), "r4": (0, 6),
+    "r5": (5, 0), "r6": (7, 0), "r7": (9, 0), "r8": (8, 0)
 }
+
+# 创建环境实例
+raw_env = MultiAgentGridEnv(
+    grid_size=(10, 10),
+    module_specs=module_specs,
+    reagent_specs=reagent_specs,
+    start_point=start_point
+)
+
+# 使用包装器将多智能体环境转化为平铺形式
+env = MultiAgentFlatWrapper(raw_env)
+
+# 加载训练好的 PPO 模型
+model = PPO.load("ppo_grid_placement_final")
 
 # 创建输出文件夹
 output_folder = "./layout_steps"
 os.makedirs(output_folder, exist_ok=True)
 
 
+# 可视化布局的函数
 def plot_step(grid, active_modules, step):
     """
     绘制当前步骤的布局图，显示单元中心的坐标，并带有网格。
@@ -87,8 +77,7 @@ def plot_step(grid, active_modules, step):
     }
 
     # 绘制模块和试剂
-    for module in active_modules:
-        module_id = module["id"]
+    for module_id, module in active_modules.items():
         row, col, height, width = module["position"]
 
         # 模块边界
@@ -120,7 +109,7 @@ def plot_step(grid, active_modules, step):
     ax.grid(True, color='gray', linestyle='-', linewidth=0.5)
 
     # 设置标题
-    ax.set_title(f"布局步骤 {step}", fontsize=16)
+    ax.set_title(f"Placement step: {step}", fontsize=16)
 
     # 保存图片
     file_path = f"./layout_steps/step_{step:02d}.png"
@@ -130,28 +119,34 @@ def plot_step(grid, active_modules, step):
     print(f"✅ 步骤 {step} 可视化已保存至 {file_path}")
 
 
-env = GridPlacementEnv(
-    grid_size=(10, 10),
-    module_specs=module_specs,
-    reagent_specs=reagent_specs,
-    start_point=start_point
-)
 
-model = PPO.load("ppo_grid_placement.zip")
+def reshape_grid(grid):
+    """将一维 grid 转换为二维网格"""
+    return np.reshape(grid, grid_size)
 
+
+# 测试过程
 obs, _ = env.reset()
 done = False
 total_reward = 0
 step_count = 0
-
+grid_size = (10, 10)
+# 进行推理并绘制每一步的布局过程
 while not done:
-    action, _ = model.predict(obs)
-    obs, reward, done, truncated, info = env.step(action)
+    actions = {}
+    obs_length = grid_size[0] * grid_size[1] + 1  # 每个 agent 的观测长度
+    actions, _ = model.predict(obs)  # 为每个 agent 选择动作
+    obs, reward, done, truncated, info = env.step(actions)
     total_reward += reward
     step_count += 1
+    agent_idx = len(env.agent_ids)
+    start_idx = (agent_idx - 1) * obs_length
+    end_idx = agent_idx * obs_length - 1
+    agent_obs = obs[start_idx:end_idx]  # 提取每个 agent 的观测
+    grid_2d = reshape_grid(agent_obs)
 
     # 绘制当前布局步骤
-    plot_step(env.grid, env.active_modules, step_count)
+    plot_step(grid_2d, raw_env.active_modules, step_count)
 
 print(f"🎯 测试完成：总奖励 = {total_reward:.2f}")
 print(f"🎯 模型推断完成，共 {step_count} 步。")
