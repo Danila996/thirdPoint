@@ -113,23 +113,15 @@ class GridRoutingEnv(gym.Env, ABC):
         2：任务所经过的路径网格
     """
 
-    def __init__(self, base_grid, tasks, max_steps=500, reward_scale=0.1):
+    def __init__(self, base_grid, max_steps=500, reward_scale=0.1, max_tasks_num=7):
         super(GridRoutingEnv, self).__init__()
         self.base_grid = base_grid.copy()  # 原始网格
         self.rows, self.cols = self.base_grid.shape
-        # 注意：此处不预先将任务区域标记到 base_grid 中
-        self.tasks = tasks  # 每个任务包含 source_area, target_area, required_volume
-        self.num_tasks = len(self.tasks)
+        self.num_tasks = max_tasks_num
         self.routing_penalty = -5
         self.invalid_cover = -30
         self.reward_cover = 10
         self.reward_completed = 20
-
-        self.action_space = spaces.Discrete(self.num_tasks * 4)
-        self.observation_space = spaces.Dict({
-            "grid": spaces.Box(low=0, high=1, shape=(self.rows, self.cols), dtype=float),
-            "agent_positions": spaces.Box(low=0, high=1, shape=(self.rows, self.cols), dtype=float)
-        })
 
         self.max_steps = max_steps
         self.current_step = 0
@@ -144,7 +136,7 @@ class GridRoutingEnv(gym.Env, ABC):
         task_type = random.randint(0, 1)
         task_types = ["double", "single"]
         # 随机生成任务：例如最大任务数为 2
-        max_tasks = 1
+        max_tasks = random.randint(1, self.max_steps)
         occupied = set()
         self.tasks = [generate_random_task(i, (self.rows, self.cols), occupied) for i in range(max_tasks)]
         self.num_tasks = len(self.tasks)
@@ -196,6 +188,11 @@ class GridRoutingEnv(gym.Env, ABC):
             task["completed"] = False
             task["cur_task"] = cur_task
             cur_task += 1
+            # self.action_space = spaces.Discrete(self.num_tasks * 4)
+            # self.observation_space = spaces.Dict({
+            #     "grid": spaces.Box(low=0, high=1, shape=(self.rows, self.cols), dtype=float),
+            #     "agent_positions": spaces.Box(low=0, high=1, shape=(self.rows, self.cols), dtype=float)
+            # })
         return self._get_observation(), {}
 
     def _get_observation(self):
@@ -287,7 +284,7 @@ class GridRoutingEnv(gym.Env, ABC):
         则优先只允许那些能连续进入该区域的动作；如果至少有一个方向能连续进入，则仅允许这些方向，
         否则维持原来的合法动作判断。
         """
-        masks = np.zeros(self.num_tasks * 4, dtype=bool)
+        masks = np.zeros(44, dtype=bool)
         drc = {0: (-1, 0), 1: (1, 0), 2: (0, -1), 3: (0, 1)}
         task_n = 0
         for task in self.tasks:
